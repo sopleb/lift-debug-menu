@@ -1,0 +1,44 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            6.0.x
+            8.0.x
+
+      - name: Build plugin
+        run: dotnet build src/LiftDebug.csproj -c Release
+
+      - name: Download BepInEx (IL2CPP, win-x64, build 764)
+        run: curl -fL -o bepinex.zip "https://builds.bepinex.dev/projects/bepinex_be/764/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.764%2B5f39645.zip"
+
+      - name: Assemble drop-in pack
+        run: |
+          mkdir -p pack
+          unzip -q bepinex.zip -d pack
+          mkdir -p pack/BepInEx/plugins
+          cp src/bin/Release/LiftDebug.dll pack/BepInEx/plugins/
+          cp README.md pack/README.md
+          ( cd pack && zip -qr "../Lift-DebugMenu-${GITHUB_REF_NAME:-dev}.zip" . )
+          ls -la Lift-DebugMenu-*.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Lift-DebugMenu-*.zip
+          generate_release_notes: true

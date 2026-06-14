@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>LiftDebug</AssemblyName>
+    <Product>Lift Debug Menu</Product>
+    <Version>0.5.1</Version>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <NoWarn>CS0626;CS0649;CS0169;CS0108</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="..\lib\*.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
