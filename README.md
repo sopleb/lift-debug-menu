@@ -24,6 +24,8 @@ Load a save first so the player exists in the scene. Press **F1** to open the co
 |---|---|
 | `items [filter]` | list item names, or only those matching a filter |
 | `give <name> [count]` | add an item to your inventory |
+| `packs [filter]` | list the predefined item-pack names |
+| `additempack <name> [count]` | give every item in a pack |
 | `noclip` | toggle no-clip movement |
 | `tp <x> <y> <z>` | teleport the player |
 | `timescale <v>` | set the game speed |

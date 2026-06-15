@@ -12,10 +12,11 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using QFSW.QC;
 using SaveSystem.Systems; // ConfigRange
+using Cheating;           // CheatItemsPackDB, CheatItemsPack, CheatItemPackRecord
 
 namespace LiftDebug
 {
-    [BepInPlugin(Guid, "Lift Debug Menu", "0.5.0")]
+    [BepInPlugin(Guid, "Lift Debug Menu", "0.6.2")]
     public class LiftDebugPlugin : BasePlugin
     {
         public const string Guid = "com.sopleb.liftdebug";
@@ -37,7 +38,7 @@ namespace LiftDebug
             UnityEngine.Object.DontDestroyOnLoad(host);
             Host = host.AddComponent(Il2CppType.Of<CheatCommands>()).Cast<CheatCommands>();
             Log.LogInfo("Lift Debug Menu: loaded. F1 console | F2 noclip | F3 IsDebug | F4 diag. " +
-                        "Console commands: give, items, noclip, tp, timescale.");
+                        "Console commands: give, items, additempack, packs, noclip, tp, timescale.");
         }
     }
 
@@ -53,6 +54,10 @@ namespace LiftDebug
         public void NoClipCmd() => Cheats.Out(Cheats.NoClip());
         public void TpCmd(float x, float y, float z) => Cheats.Out(Cheats.Teleport(x, y, z));
         public void TimescaleCmd(float v) => Cheats.Out(Cheats.TimeScale(v));
+        public void AddItemPackCount(string packName, int count) => Cheats.Out(Cheats.AddItemPack(packName, count));
+        public void AddItemPackOne(string packName) => Cheats.Out(Cheats.AddItemPack(packName, 1));
+        public void PacksFilter(string filter) => Cheats.Out(Cheats.ListPacks(filter));
+        public void PacksAll() => Cheats.Out(Cheats.ListPacks(null));
     }
 
     // Native Quantum Console commands, bridged from managed delegates into the IL2CPP command table.
@@ -74,6 +79,10 @@ namespace LiftDebug
                 Add(t, "NoClipCmd", "noclip");
                 Add(t, "TpCmd", "tp");
                 Add(t, "TimescaleCmd", "timescale");
+                Add(t, "AddItemPackCount", "additempack");
+                Add(t, "AddItemPackOne", "additempack");
+                Add(t, "PacksFilter", "packs");
+                Add(t, "PacksAll", "packs");
                 _registered = true;
                 Log.LogInfo($"Registered cheat commands. Total commands now: {QuantumConsoleProcessor.LoadedCommandCount}.");
             }
@@ -125,6 +134,33 @@ namespace LiftDebug
 
         // ---- command bodies ----
 
+        // Add an item with its DEFAULT config so container/charged items (e.g. the queen
+        // bee, whose contents live in the item config) come out populated, not empty shells.
+        private static void GiveItemToPlayer(Player player, ItemDefinition def, int count, int cheatCharge)
+        {
+            var item = new Item(def, count);
+            var model = def.Prefab;
+
+            // A charged item (e.g. the queen bee) that auto-equips into the hand goes through
+            // Player.TakeItem, which carries NO config — so the held instance's contents come
+            // from cheatCharge. int.MinValue means "no charge" -> empty held item. Resolve the
+            // sentinel to the item's full reservoir capacity so the held one isn't empty.
+            int charge = cheatCharge;
+            if (charge == int.MinValue)
+            {
+                var reservoir = model.ChargeSource;
+                if (reservoir != null) charge = (int)reservoir.GetCapacity();
+            }
+
+            var handle = ConfigDataVault.GetScratchVault(out var vault);
+            try
+            {
+                var configs = model.GatherConfigs(vault);
+                player.AddItem(item, model, default(ItemSlotType), configs, vault, charge);
+            }
+            finally { handle.Dispose(); }
+        }
+
         internal static string Give(string name, int count)
         {
             if (string.IsNullOrWhiteSpace(name)) return "usage: give <name> [count]";
@@ -133,8 +169,7 @@ namespace LiftDebug
             if (def == null) return $"no item matching '{name}' (try: items {name})";
             var player = FindFirst<Player>();
             if (player == null) return "no player found (load a save first)";
-            var item = new Item(def, count);
-            player.AddItem(item, def.Prefab, default(ItemSlotType), default(ConfigRange), null, int.MinValue);
+            GiveItemToPlayer(player, def, count, int.MinValue);
             return $"gave {count}x {def.name}";
         }
 
@@ -182,6 +217,67 @@ namespace LiftDebug
         {
             Time.timeScale = Mathf.Max(0f, v);
             return $"timescale -> {Time.timeScale}";
+        }
+
+        // The cheat-pack database survives in the release build, held by GameAssets.
+        private static CheatItemsPackDB FindPackDb()
+        {
+            var db = FindFirst<CheatItemsPackDB>();
+            if (db != null) return db;
+            var assets = FindFirst<GameAssets>();
+            return assets != null ? assets.CheatItemsPackDB : null;
+        }
+
+        internal static string AddItemPack(string packName, int packsCount)
+        {
+            if (string.IsNullOrWhiteSpace(packName)) return "usage: additempack <name> [count]";
+            packsCount = Math.Max(1, packsCount);
+            var db = FindPackDb();
+            if (db == null) return "no CheatItemsPackDB loaded (load a save first)";
+            var pack = db.GetPackByName(packName);
+            if (pack == null) return $"pack '{packName}' not found. Available: {PackNames(db, null)}";
+            var player = FindFirst<Player>();
+            if (player == null) return "no player found (load a save first)";
+            var records = pack.Records;
+            if (records == null || records.Length == 0) return $"pack '{pack.PackName}' is empty";
+
+            int given = 0;
+            for (int c = 0; c < packsCount; c++)
+            {
+                for (int i = 0; i < records.Length; i++)
+                {
+                    var rec = records[i];
+                    if (rec.Definition == null) continue;
+                    GiveItemToPlayer(player, rec.Definition, rec.Count, rec.Capacity);
+                    given++;
+                }
+            }
+            return $"gave pack '{pack.PackName}' ({records.Length} item type(s)) x{packsCount} = {given} adds";
+        }
+
+        internal static string ListPacks(string filter)
+        {
+            var db = FindPackDb();
+            if (db == null) return "no CheatItemsPackDB loaded (load a save first)";
+            var names = PackNames(db, filter);
+            return string.IsNullOrEmpty(names) ? "no packs matched" : $"packs:\n{names}";
+        }
+
+        private static string PackNames(CheatItemsPackDB db, string filter)
+        {
+            var packs = db.Packs;
+            if (packs == null) return string.Empty;
+            var sb = new StringBuilder();
+            for (int i = 0; i < packs.Length; i++)
+            {
+                var p = packs[i];
+                if (p == null) continue;
+                var nm = p.PackName;
+                if (string.IsNullOrEmpty(nm)) continue;
+                if (!string.IsNullOrEmpty(filter) && nm.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                sb.Append(nm).Append("    ");
+            }
+            return sb.ToString().TrimEnd();
         }
     }
 
